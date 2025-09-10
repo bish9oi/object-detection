@@ -4,16 +4,8 @@ import { DetectionModes } from './components/DetectionModes';
 import { ObjectTracking } from './components/ObjectTracking';
 import { ROIAlerts } from './components/ROIAlerts';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { DetectionResult } from './utils/objectDetection';
 
-interface DetectionResult {
-  id: string;
-  label: string;
-  confidence: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 function App() {
   const [activeTab, setActiveTab] = useState('detection');

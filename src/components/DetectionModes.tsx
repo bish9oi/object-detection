@@ -1,16 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Upload, Video, Monitor, Play, Pause, Square, Settings } from 'lucide-react';
+import { objectDetector, DetectionResult } from '../utils/objectDetection';
+import { DetectionCanvas } from './DetectionCanvas';
 
-interface DetectionResult {
-  id: string;
-  label: string;
-  confidence: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  trackId?: number;
-}
 
 interface DetectionModesProps {
   onDetectionResults: (results: DetectionResult[]) => void;
@@ -20,15 +12,39 @@ interface DetectionModesProps {
 export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResults, onModeChange }) => {
   const [activeMode, setActiveMode] = useState<'image' | 'video' | 'stream'>('image');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isModelLoading, setIsModelLoading] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
+  const [detections, setDetections] = useState<DetectionResult[]>([]);
+  const [streamActive, setStreamActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const animationFrameRef = useRef<number>();
 
-  const mockDetections: DetectionResult[] = [
-    { id: '1', label: 'Person', confidence: 0.96, x: 120, y: 80, width: 180, height: 320, trackId: 1 },
-    { id: '2', label: 'Car', confidence: 0.91, x: 350, y: 200, width: 220, height: 140, trackId: 2 },
-    { id: '3', label: 'Traffic Light', confidence: 0.88, x: 580, y: 60, width: 60, height: 120, trackId: 3 },
-  ];
+  // Load model on component mount
+  useEffect(() => {
+    const loadModel = async () => {
+      setIsModelLoading(true);
+      try {
+        await objectDetector.loadModel();
+      } catch (error) {
+        console.error('Failed to load detection model:', error);
+      } finally {
+        setIsModelLoading(false);
+      }
+    };
+    
+    loadModel();
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -36,20 +52,55 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
       const reader = new FileReader();
       reader.onload = (e) => {
         setUploadedFile(e.target?.result as string);
-        setIsProcessing(true);
-        
-        // Simulate processing time
-        setTimeout(() => {
-          onDetectionResults(mockDetections);
-          setIsProcessing(false);
-        }, 2000);
+        // Image will be processed when it loads
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const startStreamDetection = async () => {
+  const processImage = async (imageElement: HTMLImageElement) => {
+    if (!objectDetector.isModelLoaded()) {
+      console.error('Model not loaded yet');
+      return;
+    }
+
     setIsProcessing(true);
+    try {
+      const results = await objectDetector.detectObjects(imageElement);
+      setDetections(results);
+      onDetectionResults(results);
+    } catch (error) {
+      console.error('Error processing image:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const processVideoFrame = async () => {
+    if (!videoRef.current || !objectDetector.isModelLoaded() || !streamActive) {
+      return;
+    }
+
+    try {
+      const results = await objectDetector.detectObjects(videoRef.current);
+      setDetections(results);
+      onDetectionResults(results);
+    } catch (error) {
+      console.error('Error processing video frame:', error);
+    }
+
+    if (streamActive) {
+      animationFrameRef.current = requestAnimationFrame(processVideoFrame);
+    }
+  };
+
+  const startStreamDetection = async () => {
+    if (!objectDetector.isModelLoaded()) {
+      alert('Detection model is still loading. Please wait...');
+      return;
+    }
+
+    setStreamActive(true);
     onModeChange('stream');
     
     try {
@@ -57,32 +108,23 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
+        processVideoFrame(); // Start processing frames
       }
-      
-      // Simulate real-time detections
-      const interval = setInterval(() => {
-        const randomDetections = mockDetections.map(det => ({
-          ...det,
-          confidence: Math.max(0.7, Math.random()),
-          x: det.x + (Math.random() - 0.5) * 20,
-          y: det.y + (Math.random() - 0.5) * 20,
-        }));
-        onDetectionResults(randomDetections);
-      }, 500);
-
-      return () => {
-        clearInterval(interval);
-        stream.getTracks().forEach(track => track.stop());
-      };
     } catch (error) {
       console.error('Error accessing camera:', error);
-      setIsProcessing(false);
+      setStreamActive(false);
     }
   };
 
   const stopStreamDetection = () => {
-    setIsProcessing(false);
+    setStreamActive(false);
     onDetectionResults([]);
+    setDetections([]);
+    
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
@@ -116,6 +158,9 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
       <h3 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
         <Camera className="h-6 w-6 text-blue-400" />
         Detection Modes
+        {isModelLoading && (
+          <span className="text-sm text-yellow-400 ml-2">Loading AI Model...</span>
+        )}
       </h3>
 
       {/* Mode Selection */}
@@ -155,17 +200,35 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
               
               {uploadedFile ? (
                 <div className="relative">
-                  <img 
+                  <img
+                    ref={imageRef}
                     src={uploadedFile} 
                     alt="Uploaded" 
-                    className="max-w-full h-auto rounded-lg mx-auto"
+                    className="max-w-full h-auto rounded-lg mx-auto hidden"
                     style={{ maxHeight: '400px' }}
+                    onLoad={(e) => {
+                      const img = e.target as HTMLImageElement;
+                      processImage(img);
+                    }}
                   />
+                  
+                  {uploadedFile && (
+                    <DetectionCanvas
+                      imageElement={imageRef.current}
+                      detections={detections}
+                      width={640}
+                      height={480}
+                      showLabels={true}
+                      showConfidence={true}
+                      showDimensions={true}
+                    />
+                  )}
+                  
                   {isProcessing && (
                     <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg">
                       <div className="text-white text-center">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mx-auto mb-4"></div>
-                        <p>Processing image...</p>
+                        <p>Analyzing objects...</p>
                       </div>
                     </div>
                   )}
@@ -195,13 +258,25 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
         {activeMode === 'stream' && (
           <div>
             <div className="relative bg-black rounded-xl overflow-hidden">
-              <video
-                ref={videoRef}
-                className="w-full h-64 object-cover"
-                muted
-                playsInline
-              />
-              {!isProcessing && (
+              {streamActive ? (
+                <div className="relative">
+                  <video
+                    ref={videoRef}
+                    className="w-full h-64 object-cover hidden"
+                    muted
+                    playsInline
+                  />
+                  <DetectionCanvas
+                    imageElement={videoRef.current}
+                    detections={detections}
+                    width={640}
+                    height={480}
+                    showLabels={true}
+                    showConfidence={true}
+                    showDimensions={true}
+                  />
+                </div>
+              ) : (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50">
                   <div className="text-center text-white">
                     <Monitor className="h-12 w-12 mx-auto mb-4" />
@@ -213,15 +288,15 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
             
             <div className="flex gap-4 mt-4">
               <button
-                onClick={isProcessing ? stopStreamDetection : startStreamDetection}
+                onClick={streamActive ? stopStreamDetection : startStreamDetection}
                 className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-medium transition-all duration-200 ${
-                  isProcessing
+                  streamActive
                     ? 'bg-red-500 hover:bg-red-600 text-white'
                     : 'bg-blue-500 hover:bg-blue-600 text-white'
                 }`}
               >
-                {isProcessing ? <Square className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-                {isProcessing ? 'Stop Stream' : 'Start Camera'}
+                {streamActive ? <Square className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                {streamActive ? 'Stop Stream' : 'Start Camera'}
               </button>
               <button className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors duration-200">
                 <Settings className="h-5 w-5" />
@@ -230,6 +305,35 @@ export const DetectionModes: React.FC<DetectionModesProps> = ({ onDetectionResul
           </div>
         )}
       </div>
+
+      {/* Detection Results Summary */}
+      {detections.length > 0 && (
+        <div className="mt-8 bg-white/5 rounded-xl p-6">
+          <h4 className="text-lg font-semibold text-white mb-4">Detection Results</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {detections.map((detection) => (
+              <div key={detection.id} className="bg-white/5 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-white">{detection.label}</span>
+                  <span className="text-green-400 text-sm">
+                    {Math.round(detection.confidence * 100)}%
+                  </span>
+                </div>
+                <div className="space-y-1 text-sm text-gray-300">
+                  <div>Position: ({detection.x}, {detection.y})</div>
+                  <div>Size: {detection.width} × {detection.height}px</div>
+                  <div>Area: {detection.area.toLocaleString()}px²</div>
+                  <div>Aspect Ratio: {detection.aspectRatio}</div>
+                  <div>Center: ({detection.centerX}, {detection.centerY})</div>
+                  {detection.trackId && (
+                    <div className="text-yellow-400">Track ID: {detection.trackId}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

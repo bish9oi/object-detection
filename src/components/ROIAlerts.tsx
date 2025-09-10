@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AlertTriangle, MapPin, Shield, Plus, Trash2, Eye } from 'lucide-react';
+import { DetectionResult } from '../utils/objectDetection';
 
 interface ROIZone {
   id: string;
@@ -12,7 +13,7 @@ interface ROIZone {
 }
 
 interface ROIAlertsProps {
-  detectionResults: any[];
+  detectionResults: DetectionResult[];
   imageWidth?: number;
   imageHeight?: number;
 }
@@ -61,16 +62,11 @@ export const ROIAlerts: React.FC<ROIAlertsProps> = ({
       zones.forEach(zone => {
         if (!zone.isActive) return;
 
-        const detectionCenter = {
-          x: detection.x + detection.width / 2,
-          y: detection.y + detection.height / 2
-        };
-
         const isInZone = (
-          detectionCenter.x >= zone.coordinates.x &&
-          detectionCenter.x <= zone.coordinates.x + zone.coordinates.width &&
-          detectionCenter.y >= zone.coordinates.y &&
-          detectionCenter.y <= zone.coordinates.y + zone.coordinates.height
+          detection.centerX >= zone.coordinates.x &&
+          detection.centerX <= zone.coordinates.x + zone.coordinates.width &&
+          detection.centerY >= zone.coordinates.y &&
+          detection.centerY <= zone.coordinates.y + zone.coordinates.height
         );
 
         if (isInZone && zone.type === 'restricted') {

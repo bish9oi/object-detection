@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Target, TrendingUp, Users, Car, AlertTriangle } from 'lucide-react';
+import { DetectionResult } from '../utils/objectDetection';
 
 interface TrackedObject {
   id: number;
@@ -16,7 +17,7 @@ interface TrackedObject {
 }
 
 interface ObjectTrackingProps {
-  detectionResults: any[];
+  detectionResults: DetectionResult[];
 }
 
 export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults }) => {
@@ -33,28 +34,38 @@ export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults
       const now = new Date();
       
       // Update tracked objects
-      const updatedObjects = detectionResults.map((detection, index) => {
-        const existingObject = trackedObjects.find(obj => obj.id === detection.trackId || obj.id === index + 1);
+      const updatedObjects: TrackedObject[] = detectionResults.map((detection) => {
+        const existingObject = trackedObjects.find(obj => obj.id === detection.trackId);
         
         if (existingObject) {
           return {
             ...existingObject,
-            ...detection,
+            label: detection.label,
+            confidence: detection.confidence,
+            x: detection.x,
+            y: detection.y,
+            width: detection.width,
+            height: detection.height,
             lastSeen: now,
             frameCount: existingObject.frameCount + 1,
             trajectory: [
               ...existingObject.trajectory.slice(-10), // Keep last 10 positions
-              { x: detection.x, y: detection.y, timestamp: now }
+              { x: detection.centerX, y: detection.centerY, timestamp: now }
             ]
           };
         } else {
           return {
-            id: detection.trackId || index + 1,
-            ...detection,
+            id: detection.trackId || Date.now() + Math.random(),
+            label: detection.label,
+            confidence: detection.confidence,
+            x: detection.x,
+            y: detection.y,
+            width: detection.width,
+            height: detection.height,
             firstSeen: now,
             lastSeen: now,
             frameCount: 1,
-            trajectory: [{ x: detection.x, y: detection.y, timestamp: now }]
+            trajectory: [{ x: detection.centerX, y: detection.centerY, timestamp: now }]
           };
         }
       });
@@ -72,7 +83,7 @@ export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults
       });
       setTotalCounts(counts);
     }
-  }, [detectionResults]);
+  }, [detectionResults, trackedObjects]);
 
   const getObjectIcon = (label: string) => {
     const lowerLabel = label.toLowerCase();
@@ -142,6 +153,9 @@ export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults
                       <div className="text-sm text-gray-400">
                         Confidence: {Math.round(obj.confidence * 100)}%
                       </div>
+                      <div className="text-sm text-gray-400">
+                        Size: {obj.width}×{obj.height}px
+                      </div>
                     </div>
                   </div>
                   
@@ -151,6 +165,9 @@ export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults
                     </div>
                     <div className="text-sm text-gray-400">
                       Frames: {obj.frameCount}
+                    </div>
+                    <div className="text-sm text-gray-400">
+                      Area: {(obj.width * obj.height).toLocaleString()}px²
                     </div>
                   </div>
                 </div>
@@ -171,7 +188,7 @@ export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults
         <div className="mt-8">
           <h4 className="text-lg font-semibold text-white mb-4">Movement Trajectories</h4>
           <div className="bg-white/5 rounded-lg p-4 h-32 relative overflow-hidden">
-            <svg className="absolute inset-0 w-full h-full">
+            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 640 480">
               {trackedObjects.map((obj, index) => (
                 <g key={obj.id}>
                   <path
@@ -183,8 +200,8 @@ export const ObjectTracking: React.FC<ObjectTrackingProps> = ({ detectionResults
                   />
                   {obj.trajectory.length > 0 && (
                     <circle
-                      cx={obj.trajectory[obj.trajectory.length - 1]?.x || 0}
-                      cy={obj.trajectory[obj.trajectory.length - 1]?.y || 0}
+                      cx={obj.trajectory[obj.trajectory.length - 1]?.x}
+                      cy={obj.trajectory[obj.trajectory.length - 1]?.y}
                       r="4"
                       fill={`hsl(${index * 60}, 70%, 60%)`}
                     />
